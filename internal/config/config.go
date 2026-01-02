@@ -212,19 +212,6 @@ type AmpUpstreamAPIKeyEntry struct {
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 }
 
-// ClaudeCodeConfig groups Claude Code specific configuration.
-type ClaudeCodeConfig struct {
-	// Fallbacks holds fallback model lists keyed by slot.
-	Fallbacks ClaudeCodeFallbacks `yaml:"fallbacks" json:"fallbacks"`
-}
-
-// ClaudeCodeFallbacks lists ordered fallback models for Claude Code slots.
-type ClaudeCodeFallbacks struct {
-	Haiku  []string `yaml:"haiku,omitempty" json:"haiku,omitempty"`
-	Sonnet []string `yaml:"sonnet,omitempty" json:"sonnet,omitempty"`
-	Opus   []string `yaml:"opus,omitempty" json:"opus,omitempty"`
-}
-
 // PayloadConfig defines default and override parameter rules applied to provider payloads.
 type PayloadConfig struct {
 	// Default defines rules that only set parameters when they are missing in the payload.
