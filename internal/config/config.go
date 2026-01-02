@@ -88,9 +88,6 @@ type Config struct {
 	// AmpCode contains Amp CLI upstream configuration, management restrictions, and model mappings.
 	AmpCode AmpCode `yaml:"ampcode" json:"ampcode"`
 
-	// ClaudeCode contains Claude Code specific configuration such as fallback models.
-	ClaudeCode ClaudeCodeConfig `yaml:"claude-code" json:"claude-code"`
-
 	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
 
