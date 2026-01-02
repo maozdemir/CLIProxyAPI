@@ -25,6 +25,22 @@ type SDKConfig struct {
 
 	// Streaming configures server-side streaming behavior (keep-alives and safe bootstrap retries).
 	Streaming StreamingConfig `yaml:"streaming" json:"streaming"`
+
+	// ClaudeCode configures Claude Code specific behavior such as fallback models.
+	ClaudeCode ClaudeCodeConfig `yaml:"claude-code" json:"claude-code"`
+}
+
+// ClaudeCodeConfig groups Claude Code specific configuration.
+type ClaudeCodeConfig struct {
+	// Fallbacks holds fallback model lists keyed by slot.
+	Fallbacks ClaudeCodeFallbacks `yaml:"fallbacks" json:"fallbacks"`
+}
+
+// ClaudeCodeFallbacks lists ordered fallback models for Claude Code slots.
+type ClaudeCodeFallbacks struct {
+	Haiku  []string `yaml:"haiku,omitempty" json:"haiku,omitempty"`
+	Sonnet []string `yaml:"sonnet,omitempty" json:"sonnet,omitempty"`
+	Opus   []string `yaml:"opus,omitempty" json:"opus,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	. "github.com/router-for-me/CLIProxyAPI/v6/internal/constant"
@@ -22,6 +23,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // ClaudeCodeAPIHandler contains the handlers for Claude API endpoints.
@@ -113,6 +115,19 @@ func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 
 	resp, errMsg := h.ExecuteCountWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, alt)
+	if errMsg != nil && h.isClaudeCodeFallbackEligible(c, errMsg) {
+		fallbacks := h.claudeCodeFallbackChain(modelName)
+		for _, fallback := range fallbacks {
+			fallbackPayload := h.setClaudeModel(rawJSON, fallback)
+			resp, errMsg = h.ExecuteCountWithAuthManager(cliCtx, h.HandlerType(), fallback, fallbackPayload, alt)
+			if errMsg == nil {
+				break
+			}
+			if !h.isClaudeCodeFallbackEligible(c, errMsg) {
+				break
+			}
+		}
+	}
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
@@ -150,6 +165,19 @@ func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSO
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 
 	resp, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, alt)
+	if errMsg != nil && h.isClaudeCodeFallbackEligible(c, errMsg) {
+		fallbacks := h.claudeCodeFallbackChain(modelName)
+		for _, fallback := range fallbacks {
+			fallbackPayload := h.setClaudeModel(rawJSON, fallback)
+			resp, errMsg = h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), fallback, fallbackPayload, alt)
+			if errMsg == nil {
+				break
+			}
+			if !h.isClaudeCodeFallbackEligible(c, errMsg) {
+				break
+			}
+		}
+	}
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
@@ -204,6 +232,8 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 
 	dataChan, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
+	fallbacks := h.claudeCodeFallbackChain(modelName)
+	fallbackIndex := 0
 	setSSEHeaders := func() {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -221,6 +251,13 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 			if !ok {
 				// Err channel closed cleanly; wait for data channel.
 				errChan = nil
+				continue
+			}
+			if errMsg != nil && h.isClaudeCodeFallbackEligible(c, errMsg) && fallbackIndex < len(fallbacks) {
+				fallback := fallbacks[fallbackIndex]
+				fallbackIndex++
+				fallbackPayload := h.setClaudeModel(rawJSON, fallback)
+				dataChan, errChan = h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), fallback, fallbackPayload, "")
 				continue
 			}
 			// Upstream failed immediately. Return proper error status and JSON.
@@ -298,4 +335,117 @@ func (h *ClaudeCodeAPIHandler) toClaudeError(msg *interfaces.ErrorMessage) claud
 			Message: msg.Error.Error(),
 		},
 	}
+}
+
+type claudeCodeFallbackSlot string
+
+const (
+	claudeCodeFallbackHaiku  claudeCodeFallbackSlot = "haiku"
+	claudeCodeFallbackSonnet claudeCodeFallbackSlot = "sonnet"
+	claudeCodeFallbackOpus   claudeCodeFallbackSlot = "opus"
+)
+
+func isClaudeCodeRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	userAgent := strings.TrimSpace(c.GetHeader("User-Agent"))
+	if strings.HasPrefix(userAgent, "claude-cli") {
+		return true
+	}
+	betas := strings.TrimSpace(c.GetHeader("Anthropic-Beta"))
+	return strings.Contains(betas, "claude-code-20250219")
+}
+
+func (h *ClaudeCodeAPIHandler) isClaudeCodeFallbackEligible(c *gin.Context, errMsg *interfaces.ErrorMessage) bool {
+	if !isClaudeCodeRequest(c) {
+		return false
+	}
+	if errMsg == nil {
+		return false
+	}
+	status := errMsg.StatusCode
+	if status == 0 && errMsg.Error != nil {
+		if se, ok := errMsg.Error.(interface{ StatusCode() int }); ok && se != nil {
+			if code := se.StatusCode(); code > 0 {
+				status = code
+			}
+		}
+	}
+	if status == http.StatusTooManyRequests || status == http.StatusRequestTimeout {
+		return true
+	}
+	return status >= http.StatusInternalServerError
+}
+
+func (h *ClaudeCodeAPIHandler) resolveClaudeCodeFallbackSlot(modelName string) claudeCodeFallbackSlot {
+	if strings.Contains(modelName, string(claudeCodeFallbackHaiku)) {
+		return claudeCodeFallbackHaiku
+	}
+	if strings.Contains(modelName, string(claudeCodeFallbackSonnet)) {
+		return claudeCodeFallbackSonnet
+	}
+	if strings.Contains(modelName, string(claudeCodeFallbackOpus)) {
+		return claudeCodeFallbackOpus
+	}
+	return ""
+}
+
+func (h *ClaudeCodeAPIHandler) getClaudeCodeFallbacks(slot claudeCodeFallbackSlot) []string {
+	if h == nil || h.Cfg == nil {
+		return nil
+	}
+	fallbacks := h.Cfg.ClaudeCode.Fallbacks
+	switch slot {
+	case claudeCodeFallbackHaiku:
+		return append([]string(nil), fallbacks.Haiku...)
+	case claudeCodeFallbackSonnet:
+		return append([]string(nil), fallbacks.Sonnet...)
+	case claudeCodeFallbackOpus:
+		return append([]string(nil), fallbacks.Opus...)
+	default:
+		return nil
+	}
+}
+
+func (h *ClaudeCodeAPIHandler) claudeCodeFallbackChain(modelName string) []string {
+	slot := h.resolveClaudeCodeFallbackSlot(strings.ToLower(strings.TrimSpace(modelName)))
+	if slot == "" {
+		return nil
+	}
+	fallbacks := h.getClaudeCodeFallbacks(slot)
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	chain := make([]string, 0, len(fallbacks))
+	seen := make(map[string]struct{}, len(fallbacks))
+	for _, fallback := range fallbacks {
+		cleaned := strings.TrimSpace(fallback)
+		if cleaned == "" {
+			continue
+		}
+		key := strings.ToLower(cleaned)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		chain = append(chain, cleaned)
+	}
+	return chain
+}
+
+func (h *ClaudeCodeAPIHandler) setClaudeModel(rawJSON []byte, modelName string) []byte {
+	if len(rawJSON) == 0 {
+		return rawJSON
+	}
+	payload := make([]byte, len(rawJSON))
+	copy(payload, rawJSON)
+	value := map[string]any{"model": modelName}
+	if updated, err := sjson.SetBytes(payload, "model", value["model"]); err == nil {
+		return updated
+	}
+	return rawJSON
 }

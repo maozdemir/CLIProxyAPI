@@ -198,6 +198,19 @@ ws-auth: false
 #     - from: "claude-haiku-4-5-20251001"
 #       to: "gemini-2.5-flash"
 
+# Claude Code fallbacks (only applied to Claude Code requests)
+# claude-code:
+#   fallbacks:
+#     haiku:
+#       - "gemini-2.5-flash"
+#       - "gpt-5-mini"
+#     sonnet:
+#       - "claude-sonnet-4-5-20250929"
+#       - "gpt-5"
+#     opus:
+#       - "claude-opus-4-1-20250805"
+#       - "gpt-5"
+
 # Global OAuth model name mappings (per channel)
 # These mappings rename model IDs for both model listing and request routing.
 # Supported channels: gemini-cli, vertex, aistudio, antigravity, claude, codex, qwen, iflow.

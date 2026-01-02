@@ -88,6 +88,9 @@ type Config struct {
 	// AmpCode contains Amp CLI upstream configuration, management restrictions, and model mappings.
 	AmpCode AmpCode `yaml:"ampcode" json:"ampcode"`
 
+	// ClaudeCode contains Claude Code specific configuration such as fallback models.
+	ClaudeCode ClaudeCodeConfig `yaml:"claude-code" json:"claude-code"`
+
 	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
 
@@ -207,6 +210,19 @@ type AmpUpstreamAPIKeyEntry struct {
 
 	// APIKeys are the client API keys (from top-level api-keys) that map to this upstream key.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+}
+
+// ClaudeCodeConfig groups Claude Code specific configuration.
+type ClaudeCodeConfig struct {
+	// Fallbacks holds fallback model lists keyed by slot.
+	Fallbacks ClaudeCodeFallbacks `yaml:"fallbacks" json:"fallbacks"`
+}
+
+// ClaudeCodeFallbacks lists ordered fallback models for Claude Code slots.
+type ClaudeCodeFallbacks struct {
+	Haiku  []string `yaml:"haiku,omitempty" json:"haiku,omitempty"`
+	Sonnet []string `yaml:"sonnet,omitempty" json:"sonnet,omitempty"`
+	Opus   []string `yaml:"opus,omitempty" json:"opus,omitempty"`
 }
 
 // PayloadConfig defines default and override parameter rules applied to provider payloads.
@@ -491,6 +507,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Claude key headers
 	cfg.SanitizeClaudeKeys()
 
+	// Sanitize Claude Code fallback lists
+	cfg.SanitizeClaudeCodeFallbacks()
+
 	// Sanitize OpenAI compatibility providers: drop entries without base-url
 	cfg.SanitizeOpenAICompatibility()
 
@@ -655,6 +674,40 @@ func normalizeModelPrefix(prefix string) string {
 		return ""
 	}
 	return trimmed
+}
+
+// SanitizeClaudeCodeFallbacks trims, removes empty entries, and de-duplicates fallback lists.
+func (cfg *Config) SanitizeClaudeCodeFallbacks() {
+	if cfg == nil {
+		return
+	}
+	cfg.ClaudeCode.Fallbacks.Haiku = sanitizeModelList(cfg.ClaudeCode.Fallbacks.Haiku)
+	cfg.ClaudeCode.Fallbacks.Sonnet = sanitizeModelList(cfg.ClaudeCode.Fallbacks.Sonnet)
+	cfg.ClaudeCode.Fallbacks.Opus = sanitizeModelList(cfg.ClaudeCode.Fallbacks.Opus)
+}
+
+func sanitizeModelList(models []string) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, raw := range models {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func syncInlineAccessProvider(cfg *Config) {
